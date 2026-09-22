@@ -1,0 +1,6 @@
+{
+  "name": "GRANDMASTER OS",
+  "description": "Smart electronic chessboard platform featuring Training Arena for openings, middlegame & endgame tactics, Personal Records Room, ESP32 hardware sync, and Stockfish AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
