@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Grandmaster OS</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --text: #e6edf3; --muted: #8b949e;
+    --accent: #3fb950; --danger: #f85149; --light-sq: #f0d9b5; --dark-sq: #b58863;
+    --border: #30363d;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f6f8fa; --panel: #ffffff; --text: #1f2328; --muted: #656d76; --border: #d0d7de;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f8fa; --panel: #ffffff; --text: #1f2328; --muted: #656d76; --border: #d0d7de;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100%;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 20px 16px 32px;
+  }
+  h1 { font-size: 1.1rem; letter-spacing: 0.08em; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: 0.75rem; margin-bottom: 16px; }
+  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
+  .dot.on { background: var(--accent); }
+  #connectBtn, #newGameBtn {
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    padding: 10px 18px; border-radius: 8px; font-size: 0.9rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #connectBtn.connected { border-color: var(--danger); color: var(--danger); }
+  .btn-row { display: flex; gap: 10px; margin-bottom: 20px; }
+  #newGameBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .board {
+    width: min(88vw, 380px); aspect-ratio: 1; display: grid;
+    grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+    border: 2px solid var(--border); border-radius: 6px; overflow: hidden;
+    margin-bottom: 18px;
+  }
+  .sq { display: flex; align-items: center; justify-content: center; font-size: clamp(18px, 6vw, 30px); }
+  .sq.light { background: var(--light-sq); }
+  .sq.dark { background: var(--dark-sq); }
+
+  .panel {
+    width: min(88vw, 380px); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; text-align: center;
+  }
+  .line1 { font-size: 1.1rem; font-weight: 600; }
+  .line2 { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
+  .meta { color: var(--muted); font-size: 0.75rem; margin-top: 10px; }
+  .error { color: var(--danger); font-size: 0.8rem; margin-top: 10px; max-width: 320px; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>♞ GRANDMASTER OS</h1>
+  <div class="sub">ESP32 Chessboard Control Panel</div>
+
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <span id="connLabel">Not connected</span>
+  </div>
+
+  <div class="btn-row">
+    <button id="connectBtn">Connect to Board</button>
+    <button id="newGameBtn" disabled>New Game</button>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <div class="panel">
+    <div class="line1" id="line1">—</div>
+    <div class="line2" id="line2">Connect to your board to begin</div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <div class="error" id="errorBox"></div>
+
+<script>
+  const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+  const STATE_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+  const CMD_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+  const PIECE_GLYPH = {
+    K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+    k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟"
+  };
+
+  const boardEl = document.getElementById("board");
+  const connectBtn = document.getElementById("connectBtn");
+  const newGameBtn = document.getElementById("newGameBtn");
+  const dot = document.getElementById("dot");
+  const connLabel = document.getElementById("connLabel");
+  const line1El = document.getElementById("line1");
+  const line2El = document.getElementById("line2");
+  const metaEl = document.getElementById("meta");
+  const errorBox = document.getElementById("errorBox");
+
+  let device = null, cmdChar = null;
+
+  function buildEmptyBoard() {
+    boardEl.innerHTML = "";
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const sq = document.createElement("div");
+        sq.className = "sq " + (((r + c) % 2 === 0) ? "light" : "dark");
+        sq.id = "sq-" + r + "-" + c;
+        boardEl.appendChild(sq);
+      }
+    }
+  }
+  buildEmptyBoard();
+
+  function renderBoard(boardStr) {
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const ch = boardStr[r * 8 + c];
+        const el = document.getElementById("sq-" + r + "-" + c);
+        el.textContent = PIECE_GLYPH[ch] || "";
+      }
+    }
+  }
+
+  function setConnected(isConnected) {
+    dot.classList.toggle("on", isConnected);
+    connLabel.textContent = isConnected ? "Connected" : "Not connected";
+    connectBtn.textContent = isConnected ? "Disconnect" : "Connect to Board";
+    connectBtn.classList.toggle("connected", isConnected);
+    newGameBtn.disabled = !isConnected;
+    if (!isConnected) {
+      line1El.textContent = "—";
+      line2El.textContent = "Connect to your board to begin";
+      metaEl.textContent = "";
+    }
+  }
+
+  function showError(msg) { errorBox.textContent = msg; }
+
+  function handleStateNotification(dataView) {
+    const text = new TextDecoder("utf-8").decode(dataView);
+    let state;
+    try { state = JSON.parse(text); } catch (e) { console.error("Bad JSON:", text); return; }
+    renderBoard(state.board || "");
+    line1El.textContent = state.line1 || "—";
+    line2El.textContent = state.line2 || (state.turn === "white" ? "WHITE TO MOVE" : "BLACK TO MOVE");
+    metaEl.textContent = "Move " + (state.moveCount || 0) + (state.gameOver ? " · GAME OVER" : "");
+  }
+
+  async function connect() {
+    showError("");
+    if (!navigator.bluetooth) {
+      showError("Web Bluetooth isn't supported in this browser. Use Chrome or Edge (desktop or Android) over HTTPS — iOS Safari isn't supported.");
+      return;
+    }
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }]
+      });
+      device.addEventListener("gattserverdisconnected", () => setConnected(false));
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      const stateChar = await service.getCharacteristic(STATE_CHAR_UUID);
+      cmdChar = await service.getCharacteristic(CMD_CHAR_UUID);
+
+      await stateChar.startNotifications();
+      stateChar.addEventListener("characteristicvaluechanged", (e) => handleStateNotification(e.target.value));
+
+      setConnected(true);
+      await sendCommand("GET_STATE");
+    } catch (err) {
+      console.error(err);
+      if (err.name !== "NotFoundError") showError(err.message || "Couldn't connect to the board.");
+    }
+  }
+
+  function disconnect() {
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    setConnected(false);
+  }
+
+  async function sendCommand(cmd) {
+    if (!cmdChar) return;
+    try {
+      await cmdChar.writeValue(new TextEncoder().encode(cmd));
+    } catch (err) {
+      showError("Command failed: " + (err.message || cmd));
+    }
+  }
+
+  connectBtn.addEventListener("click", () => {
+    if (connectBtn.classList.contains("connected")) disconnect();
+    else connect();
+  });
+  newGameBtn.addEventListener("click", () => sendCommand("NEW_GAME"));
+</script>
+</body>
+</html>
